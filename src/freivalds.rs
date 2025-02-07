@@ -51,7 +51,7 @@ pub fn builder<F: PrimeField, const N: usize>(
     let ro_config = poseidon_setup::<F>();
     let mut ro = <PoseidonSponge<F> as SpongeWithGadget<F>>::Var::new(cs.clone(), &ro_config);
 
-    /*** BUILD CIRCUIT HERE ***/
+    /*** THE CIRCUIT ***/
     // A is a private witness
     let a_vars: Vec<Vec<FpVar<F>>> = a
         .iter()
@@ -72,7 +72,7 @@ pub fn builder<F: PrimeField, const N: usize>(
         })
         .collect::<Result<_, _>>()?;
 
-    // C is public
+    // C is a public input
     let c_vars: Vec<Vec<FpVar<F>>> = c
         .iter()
         .map(|row| {
@@ -83,22 +83,13 @@ pub fn builder<F: PrimeField, const N: usize>(
         .collect::<Result<_, _>>()?;
 
     // Absorb A and B into the sponge as they are controlled by the prover
-    for row in &a_vars {
-        for val in row {
-            ro.absorb(val)?;
-        }
-    }
-
-    for row in &b_vars {
-        for val in row {
-            ro.absorb(val)?;
-        }
-    }
-
-    // Absorb C into the sponge
-    for row in &c_vars {
-        for val in row {
-            ro.absorb(val)?;
+    // C is a public input and we are absorbing it assuming that it's a part of the instance
+    // hence, under the control of the prover
+    for matrix_vars in [&a_vars, &b_vars, &c_vars].iter() {
+        for row in matrix_vars.iter() {
+            for val in row.iter() {
+                ro.absorb(val)?;
+            }
         }
     }
 
