@@ -1,3 +1,18 @@
+### Freivalds' Algorithm with Zero-Knowledge Proofs
+
+This Rust project implements Freivalds' algorithm within a zero-knowledge proof framework using the arkworks ecosystem. It verifies matrix multiplication correctness without revealing private data.
+
+A and B are private witnesses.
+
+C is a public input. (Assumption: It's part of the instance and thus included in the transcript)
+
+### Build and Run
+
+`cargo build`
+`cargo run`
+`cargo test`
+
+
 ### Quadratic Non-Interactive Matrix Multiplication Verification
 
 In this assignment, we want you to implement [Freivalds' Algorithm](https://en.wikipedia.org/wiki/Freivalds%27_algorithm) for checking the correctness of a matrix multiplication in quadratic (rather than the naive cubic) time. However we want you to implement this as an arithmetic circuit that could be proven non-interactively (e.g., using a SNARK), by way of `arkworks` implementation of the R1CS constraint system. Luckily, `arkworks` provides a circuit builder interface (a [`ConstraintSystem`](https://docs.rs/ark-relations/latest/ark_relations/r1cs/struct.ConstraintSystem.html)) that allows you to do this using high level idioms in Rust, without having to manipulate any circuit gates or wires directly. 
