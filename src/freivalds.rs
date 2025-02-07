@@ -3,7 +3,11 @@ use ark_crypto_primitives::sponge::{
     poseidon::{find_poseidon_ark_and_mds, PoseidonConfig, PoseidonSponge},
 };
 use ark_ff::PrimeField;
-use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar};
+use ark_r1cs_std::{
+    alloc::AllocVar,
+    eq::EqGadget,
+    fields::{fp::FpVar, FieldVar},
+};
 use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisError, SynthesisMode};
 
 /// Returns poseidon config for sponge.
@@ -48,7 +52,185 @@ pub fn builder<F: PrimeField, const N: usize>(
     let mut ro = <PoseidonSponge<F> as SpongeWithGadget<F>>::Var::new(cs.clone(), &ro_config);
 
     /*** BUILD CIRCUIT HERE ***/
+    // A is a private witness
+    let a_vars: Vec<Vec<FpVar<F>>> = a
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|&val| FpVar::new_witness(cs.clone(), || Ok(F::from(val))))
+                .collect::<Result<_, _>>()
+        })
+        .collect::<Result<_, _>>()?;
+
+    // B is a private witness
+    let b_vars: Vec<Vec<FpVar<F>>> = b
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|&val| FpVar::new_witness(cs.clone(), || Ok(F::from(val))))
+                .collect::<Result<_, _>>()
+        })
+        .collect::<Result<_, _>>()?;
+
+    // C is public
+    let c_vars: Vec<Vec<FpVar<F>>> = c
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|&val| FpVar::new_input(cs.clone(), || Ok(F::from(val))))
+                .collect::<Result<_, _>>()
+        })
+        .collect::<Result<_, _>>()?;
+
+    // Absorb A and B into the sponge as they are controlled by the prover
+    for row in &a_vars {
+        for val in row {
+            ro.absorb(val)?;
+        }
+    }
+
+    for row in &b_vars {
+        for val in row {
+            ro.absorb(val)?;
+        }
+    }
+
+    // Absorb C into the sponge
+    for row in &c_vars {
+        for val in row {
+            ro.absorb(val)?;
+        }
+    }
+
+    // Perform k iterations of Freivalds' algorithm
+    for _ in 0..k {
+        // Generate random vector r based on the transcript
+        let r: Vec<FpVar<F>> = (0..N)
+            .map(|_| {
+                ro.squeeze_field_elements(1)
+                    .and_then(|mut v| v.pop().ok_or(SynthesisError::AssignmentMissing))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Compute B * r
+        let mut br: Vec<FpVar<F>> = vec![FpVar::<F>::zero(); N];
+        for i in 0..N {
+            for j in 0..N {
+                br[i] += &b_vars[i][j] * &r[j];
+            }
+        }
+
+        // Compute A * (B * r)
+        let mut abr: Vec<FpVar<F>> = vec![FpVar::<F>::zero(); N];
+        for i in 0..N {
+            for j in 0..N {
+                abr[i] += &a_vars[i][j] * &br[j];
+            }
+        }
+
+        // Compute C * r
+        let mut cr: Vec<FpVar<F>> = vec![FpVar::<F>::zero(); N];
+        for i in 0..N {
+            for j in 0..N {
+                cr[i] += &c_vars[i][j] * &r[j];
+            }
+        }
+
+        // Make sure that A * (B * r) = C * r
+        for i in 0..N {
+            abr[i].enforce_equal(&cr[i])?;
+        }
+    }
 
     cs.finalize();
     Ok(cs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    type F = <ark_bn254::g1::Config as ark_ec::models::CurveConfig>::BaseField;
+
+    #[test]
+    fn test_builder_valid_matrices() {
+        let k = 1;
+        const N: usize = 2;
+
+        let a = [[1, 2], [3, 4]];
+        let b = [[5, 6], [7, 8]];
+
+        let c = [[19, 22], [43, 50]];
+
+        let cs = builder::<F, N>(k, &a, &b, &c).unwrap();
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_builder_invalid_matrices() {
+        let k = 1;
+        const N: usize = 2;
+        let a = [[1, 2], [3, 4]];
+        let b = [[5, 6], [7, 8]];
+
+        // Invalid matrix
+        let c = [[20, 22], [43, 50]];
+
+        let cs = builder::<F, N>(k, &a, &b, &c).unwrap();
+        assert!(!cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_builder_different_k() {
+        let k = 3;
+        const N: usize = 2;
+        let a = [[1, 2], [3, 4]];
+        let b = [[5, 6], [7, 8]];
+
+        let c = [[19, 22], [43, 50]];
+
+        let cs = builder::<F, N>(k, &a, &b, &c).unwrap();
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_builder_zero_matrices() {
+        let k = 1;
+        const N: usize = 2;
+
+        let a = [[1, 2], [3, 4]];
+        let b = [[0, 0], [0, 0]];
+
+        let c = [[0, 0], [0, 0]];
+
+        let cs = builder::<F, N>(k, &a, &b, &c).unwrap();
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_builder_identity_matrices() {
+        let k = 1;
+        const N: usize = 2;
+
+        let a = [[1, 2], [3, 4]];
+        let b = [[1, 0], [0, 1]];
+
+        let c = [[1, 2], [3, 4]];
+
+        let cs = builder::<F, N>(k, &a, &b, &c).unwrap();
+        assert!(cs.is_satisfied().unwrap());
+    }
+
+    #[test]
+    fn test_builder_single_element_matrices() {
+        let k = 1;
+        const N: usize = 1;
+
+        let a = [[1]];
+        let b = [[2]];
+
+        let c = [[2]];
+
+        let cs = builder::<F, N>(k, &a, &b, &c).unwrap();
+        assert!(cs.is_satisfied().unwrap());
+    }
 }
