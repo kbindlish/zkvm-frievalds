@@ -9,7 +9,9 @@ C is a public input. (Assumption: It's part of the instance and thus included in
 ### Build and Run
 
 `cargo build`
+
 `cargo run`
+
 `cargo test`
 
 
